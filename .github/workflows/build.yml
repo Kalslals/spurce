@@ -1,4 +1,4 @@
-name: Ultimate Mod Menu Injector
+name: Perfect Mod Menu Injector
 
 on:
   push:
@@ -6,29 +6,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  inject-mod:
+  build-and-inject:
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Repo'yu Kopyala
       uses: actions/checkout@v4
 
-    - name: Theos ve Araçları Kur
+    - name: Xcode ve Sistem Araçlarını Hazırla
+      run: |
+        sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer || true
+        brew install ldid make wget
+
+    - name: Theos Ortamını Kur
       run: |
         git clone --recursive https://github.com/theos/theos.git ~/theos
         echo "THEOS=~/theos" >> $GITHUB_ENV
-        brew install ldid make wget
-        
-        # Enjeksiyon aracı (insert_dylib)
+
+    - name: Enjeksiyon Aracını Kur (insert_dylib)
+      run: |
         git clone https://github.com/Tyilo/insert_dylib
         cd insert_dylib && g++ insert_dylib.cpp -o insert_dylib && sudo cp insert_dylib /usr/local/bin/
 
-    - name: Test Oyununun IPA Dosyasını İndir
+    - name: Test IPA Dosyasını İndir
       run: |
-        # Enjeksiyon testleri için kararlı ve hafif bir test IPA'sı çekiyoruz
         wget -O Game.ipa "https://github.com/Hax4Extraction/MDC-ENT-Test-Apps/raw/main/Payloads/test.ipa"
 
-    - name: Test Mod Menü Kodlarını Yaz (.dylib)
+    - name: Mod Menü Kodlarını Oluştur
       run: |
         mkdir -p Tweak
         
@@ -58,19 +64,17 @@ jobs:
         include $(THEOS_MAKE_PATH)/tweak.mk
         EOF
 
-        # Oyun açıldığında ekranda mod menünün göründüğünü test eden kod
         cat << 'EOF' > Tweak/Tweak.xm
         #import <UIKit/UIKit.h>
 
         %ctor {
-            NSLog(@"[TestModMenu] Mod Menü kancası yüklendi!");
+            NSLog(@"[TestModMenu] Mod Menü kancası başarıyla yüklendi!");
             
-            // Oyuna girildikten 3 saniye sonra test menüsünü ekrana getir
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_query(), ^{
                 UIWindow *window = [[UIApplication sharedApplication] keyWindow];
                 
                 UIAlertController *modMenu = [UIAlertController alertControllerWithTitle:@"🎮 Test Mod Menü" 
-                                                                                  message:@"[✔] Mod Menü Altyapısı Çalışıyor!\n[!] Offsetler henüz eklenmedi." 
+                                                                                  message:@"[✔] GitHub Actions Enjeksiyonu Başarılı!\n[!] Altyapı kusursuz çalışıyor." 
                                                                            preferredStyle:UIAlertControllerStyleAlert];
                 
                 [modMenu addAction:[UIAlertAction actionWithTitle:@"Tamam" style:UIAlertActionStyleDefault handler:nil]];
@@ -85,7 +89,7 @@ jobs:
         make package
       working-directory: ./Tweak
 
-    - name: IPA Dosyasına Enjekte Et
+    - name: IPA Dosyasına Enjekte Et ve Paketle
       run: |
         unzip -q Game.ipa -d Decoded_IPA
         APP_DIR=$(ls Decoded_IPA/Payload)
@@ -93,13 +97,11 @@ jobs:
         
         echo "Hedef Binary: $BINARY_NAME"
         
-        # Derlenen kütüphaneyi .app içine kopyala ve enjekte et
         cp Tweak/.theos/obj/*.dylib "Decoded_IPA/Payload/$APP_DIR/"
         DYLIB_FILE=$(ls Tweak/.theos/obj/*.dylib | head -n 1 | xargs basename)
         
         insert_dylib "@executable_path/$DYLIB_FILE" "Decoded_IPA/Payload/$APP_DIR/$BINARY_NAME"
         
-        # Yeni IPA paketini oluştur
         cd Decoded_IPA && zip -9 -r ../Ready_Modded_Game.ipa Payload
         cd ..
 
